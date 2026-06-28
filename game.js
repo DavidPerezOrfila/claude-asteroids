@@ -25,7 +25,6 @@ function pressed(code) {
 const wrap = (v, max) => ((v % max) + max) % max;
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const rand = (min, max) => min + Math.random() * (max - min);
-const randInt = (min, max) => Math.floor(rand(min, max + 1));
 
 // ── Bullet ────────────────────────────────────────────────────────────────────
 class Bullet {
@@ -76,7 +75,7 @@ class Asteroid {
     this.rot = rand(0, Math.PI * 2);
 
     // Polígono irregular
-    const n = randInt(8, 13);
+    const n = Math.floor(rand(8, 14));
     this.verts = [];
     for (let i = 0; i < n; i++) {
       const a = (i / n) * Math.PI * 2;
@@ -132,6 +131,7 @@ class Ship {
     this.shootCooldown = 0;
     this.dead = false;
     this.tripleShotTimer = 0;
+    this.hasBomb = false;
   }
 
   update(dt) {
@@ -284,12 +284,52 @@ class PowerUpTriple {
   }
 }
 
+// ── PowerUp Bomba Nova ─────────────────────────────────────────────────────
+class PowerUpBomb {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.radius = 12;
+    this.dead = false;
+    this.ttl = 8;
+  }
+
+  update(dt) {
+    this.ttl -= dt;
+    if (this.ttl <= 0) this.dead = true;
+  }
+
+  draw() {
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    ctx.strokeStyle = '#f44';
+    ctx.lineWidth = 2;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2 - Math.PI / 4;
+      const r = 12;
+      if (i === 0) ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r);
+      else ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+    }
+    ctx.closePath();
+    ctx.stroke();
+    ctx.font = 'bold 11px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#f44';
+    ctx.fillText('N', 0, 0);
+    ctx.restore();
+  }
+}
+
 // ── Estado del juego ──────────────────────────────────────────────────────────
 let ship, bullets, asteroids, particles, powerUps;
 let score, lives, level;
 let state;      // 'playing' | 'dead' | 'gameover'
 let deadTimer;
 let powerUpSpawnedThisLevel;
+let flashTimer = 0;
 
 function spawnAsteroids(count) {
   const SAFE_DIST = 130;
@@ -345,6 +385,8 @@ function killShip() {
 
 // ── Update ────────────────────────────────────────────────────────────────────
 function update(dt) {
+  if (flashTimer > 0) flashTimer -= dt;
+
   if (state === 'gameover') {
     if (pressed('Space')) initGame();
     particles.forEach(p => p.update(dt));
@@ -389,6 +431,9 @@ function update(dt) {
           powerUps.push(new PowerUpTriple(a.x, a.y));
           powerUpSpawnedThisLevel = true;
         }
+        if (Math.random() < 0.05) {
+          powerUps.push(new PowerUpBomb(a.x, a.y));
+        }
         newAsteroids.push(...a.split());
       }
     }
@@ -410,10 +455,26 @@ function update(dt) {
   for (const p of powerUps) {
     if (!p.dead && dist(ship, p) < ship.radius + p.radius) {
       p.dead = true;
-      ship.tripleShotTimer = 5;
+      if (p instanceof PowerUpTriple) {
+        ship.tripleShotTimer = 5;
+      } else if (p instanceof PowerUpBomb) {
+        ship.hasBomb = true;
+      }
     }
   }
   powerUps = powerUps.filter(p => !p.dead);
+
+  // Bomba Nova
+  if (state === 'playing' && pressed('KeyB') && ship.hasBomb) {
+    ship.hasBomb = false;
+    flashTimer = 0.3;
+    for (const a of asteroids) {
+      a.dead = true;
+      score += POINTS[a.size];
+      explode(a.x, a.y, a.size * 8);
+    }
+    asteroids = asteroids.filter(a => !a.dead);
+  }
 
   // Nivel completado
   if (asteroids.length === 0) nextLevel();
@@ -456,6 +517,14 @@ function drawHUD() {
     ctx.fillStyle = '#fff';
     ctx.font = '15px monospace';
   }
+  if (ship.hasBomb) {
+    ctx.fillStyle = '#f44';
+    ctx.font = 'bold 15px monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText('BOMBA [B]', W - 14, 70);
+    ctx.fillStyle = '#fff';
+    ctx.font = '15px monospace';
+  }
 
   for (let i = 0; i < lives; i++)
     drawLifeIcon(W - 16 - i * 22, 18);
@@ -481,6 +550,12 @@ function draw() {
   asteroids.forEach(a => a.draw());
   bullets.forEach(b => b.draw());
   ship.draw();
+
+  // Destello de Bomba Nova
+  if (flashTimer > 0) {
+    ctx.fillStyle = `rgba(255,255,255,${flashTimer.toFixed(2)})`;
+    ctx.fillRect(0, 0, W, H);
+  }
 
   drawHUD();
 
